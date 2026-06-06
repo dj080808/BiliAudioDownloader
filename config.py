@@ -25,3 +25,33 @@ ALLOWED_DOMAINS = [
     "b23.tv",
     "b22.tv",
 ]
+
+# ---------------------------------------------------------------------------
+# Audio format settings
+# ---------------------------------------------------------------------------
+
+# Default output audio format (can be overridden via env var)
+DEFAULT_AUDIO_FORMAT = os.environ.get("DOWNLOADTOOL_DEFAULT_AUDIO_FORMAT", "mp3")
+
+# All audio formats the user is allowed to request
+ALLOWED_AUDIO_FORMATS = [
+    "mp3",
+    "m4a",
+    "opus",
+    "flac",
+    "wav",
+    "aac",
+]
+
+# Formats Bilibili serves natively (no ffmpeg post-processing needed)
+NATIVE_AUDIO_FORMATS = ["m4a", "opus"]
+
+# Mapping from audio format to MIME type for FileResponse
+AUDIO_MIME_TYPES: dict[str, str] = {
+    "mp3": "audio/mpeg",
+    "m4a": "audio/mp4",
+    "opus": "audio/opus",
+    "flac": "audio/flac",
+    "wav": "audio/wav",
+    "aac": "audio/aac",
+}

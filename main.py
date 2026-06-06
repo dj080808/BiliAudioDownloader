@@ -17,8 +17,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from config import ALLOWED_DOMAINS, CLEANUP_INTERVAL_SECONDS, MAX_TASK_AGE_SECONDS, TEMP_DIR
-from downloader import download_audio, get_audio_ext, get_video_info, sanitize_filename
+from config import ALLOWED_DOMAINS, AUDIO_MIME_TYPES, CLEANUP_INTERVAL_SECONDS, MAX_TASK_AGE_SECONDS, TEMP_DIR
+from downloader import download_audio, get_video_info, sanitize_filename
 from models import PrepareRequest, PrepareResponse, TaskStatus, TaskStatusResponse
 from task_manager import TaskManager
 
@@ -68,7 +68,7 @@ async def prepare(request: PrepareRequest) -> PrepareResponse:
     url = _normalize_url(request.url)
     _validate_url(url)
 
-    task = await task_manager.create(url)
+    task = await task_manager.create(url, audio_format=request.format)
     asyncio.create_task(_process_download(task.task_id))
     return PrepareResponse(task_id=task.task_id, status=task.status)
 
@@ -109,10 +109,12 @@ async def download_file(task_id: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="File no longer available")
 
     cleanup = BackgroundTask(_cleanup_after_download, task_id)
+    mime_type = AUDIO_MIME_TYPES.get(task.audio_format, "audio/mpeg")
+    fallback_name = f"audio.{task.audio_format}" if task.audio_format else "audio.mp3"
     return FileResponse(
         path=task.filepath,
-        filename=task.filename or "audio.m4a",
-        media_type="audio/mp4",
+        filename=task.filename or fallback_name,
+        media_type=mime_type,
         background=cleanup,
     )
 
@@ -137,11 +139,11 @@ async def _process_download(task_id: str) -> None:
         duration = info.get("duration")
         print(f"[task:{task_id[:8]}] Title: {title[:50]}")
 
-        # Determine file extension from best audio format
+        # Output format comes from the user's choice (default mp3)
+        ext = task.audio_format
         formats = info.get("formats") or []
-        ext = get_audio_ext(formats)
 
-        # Estimate expected file size from best audio format
+        # Estimate expected file size from best audio format (source, not converted)
         expected_size: int | None = None
         audio_fmts = [
             f for f in formats
@@ -174,6 +176,7 @@ async def _process_download(task_id: str) -> None:
 
         await download_audio(
             task.url, filepath,
+            audio_format=task.audio_format,
             progress_callback=_on_progress,
             expected_size=expected_size,
         )

@@ -74,6 +74,30 @@
             color: #999;
         }
 
+        #format-select {
+            padding: 12px 12px;
+            border: 2px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 0.95rem;
+            font-family: inherit;
+            background: #fff;
+            color: var(--text);
+            cursor: pointer;
+            outline: none;
+            min-width: 100px;
+            transition: border-color 0.2s;
+        }
+
+        #format-select:focus {
+            border-color: var(--primary);
+        }
+
+        #format-select:disabled {
+            background: #f0f0f0;
+            color: #999;
+            cursor: not-allowed;
+        }
+
         #fetch-btn,
         #reset-btn {
             padding: 12px 24px;
@@ -268,6 +292,90 @@
             color: var(--text-secondary);
             margin-top: 6px;
         }
+
+        /* ---- History list ---- */
+        #history-section {
+            margin-top: 24px;
+        }
+
+        #history-section h3 {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        #history-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        #history-list li {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+
+        #history-list li:hover {
+            border-color: var(--primary);
+            background: #fff5f7;
+        }
+
+        .history-url {
+            flex: 1;
+            font-size: 0.85rem;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+        }
+
+        .history-title {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+
+        .history-badge {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #eee;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            text-transform: uppercase;
+        }
+
+        .history-time {
+            font-size: 0.7rem;
+            color: #aaa;
+            white-space: nowrap;
+        }
+
+        #history-clear {
+            font-size: 0.75rem;
+            color: #ccc;
+            cursor: pointer;
+            border: none;
+            background: none;
+            margin-left: 8px;
+        }
+
+        #history-clear:hover {
+            color: #e74c3c;
+        }
     </style>
 </head>
 <body>
@@ -277,11 +385,24 @@
         <div class="input-row">
             <input type="text" id="url-input"
                    placeholder="Put Bilibili video URL... e.g. https://www.bilibili.com/video/BV1xx411c7mD">
+            <select id="format-select">
+                <option value="mp3" selected>MP3</option>
+                <option value="m4a">M4A (AAC)</option>
+                <option value="opus">Opus</option>
+                <option value="flac">FLAC</option>
+                <option value="wav">WAV</option>
+                <option value="aac">AAC</option>
+            </select>
             <button id="fetch-btn">Submit</button>
             <button id="reset-btn">Reset</button>
         </div>
 
         <div id="status-msg"></div>
+
+        <div id="history-section" style="display:none">
+            <h3>Recent <button id="history-clear">clear</button></h3>
+            <ul id="history-list"></ul>
+        </div>
 
         <div id="video-card">
             <div class="card-header">
@@ -314,6 +435,7 @@
         const coverImg = document.getElementById('cover-img');
         const videoTitle = document.getElementById('video-title');
         const videoDuration = document.getElementById('video-duration');
+        const formatSelect = document.getElementById('format-select');
         const downloadLink = document.getElementById('download-link');
         const downloadBtnDisabled = document.getElementById('download-btn-disabled');
         const progressWrap = document.getElementById('progress-wrap');
@@ -322,6 +444,110 @@
 
         let pollTimer = null;
         let currentTaskId = null;
+        let currentUrl = null;
+        let currentFormat = 'mp3';
+        let currentTitle = null;
+
+        // ---- History (localStorage) ----
+        const HISTORY_KEY = 'downloadtool_history';
+        const HISTORY_MAX_AGE_MS = 7 * 24 * 3600 * 1000;  // 7 days
+        const historySection = document.getElementById('history-section');
+        const historyList = document.getElementById('history-list');
+        const historyClear = document.getElementById('history-clear');
+
+        function loadHistory() {
+            try {
+                const raw = localStorage.getItem(HISTORY_KEY);
+                return raw ? JSON.parse(raw) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function saveHistory(items) {
+            try {
+                localStorage.setItem(HISTORY_KEY, JSON.stringify(items));
+            } catch (e) {
+                // localStorage full or unavailable — silently ignore
+            }
+        }
+
+        function cleanHistory(items) {
+            const cutoff = Date.now() - HISTORY_MAX_AGE_MS;
+            return items.filter(e => e.ts > cutoff);
+        }
+
+        function addToHistory(url, format, title) {
+            let items = cleanHistory(loadHistory());
+            // Remove duplicate URL (same normalized URL → keep only the newest)
+            items = items.filter(e => e.url !== url);
+            items.unshift({
+                url: url,
+                format: format,
+                title: title || '',
+                ts: Date.now()
+            });
+            // Keep at most 30 entries
+            if (items.length > 30) items = items.slice(0, 30);
+            saveHistory(items);
+            renderHistory(items);
+        }
+
+        function renderHistory(items) {
+            items = items || cleanHistory(loadHistory());
+            if (!items.length) {
+                historySection.style.display = 'none';
+                return;
+            }
+            historySection.style.display = 'block';
+            historyList.innerHTML = items.map(e => {
+                const timeStr = formatTimeAgo(e.ts);
+                const displayTitle = e.title ? e.title : e.url;
+                return '<li onclick="fillFromHistory(\'' + escapeHtml(e.url) + '\', \'' + escapeHtml(e.format) + '\')">'
+                    + '<span class="history-url" title="' + escapeHtml(e.url) + '">' + escapeHtml(displayTitle) + '</span>'
+                    + '<span class="history-badge">' + escapeHtml(e.format) + '</span>'
+                    + '<span class="history-time">' + timeStr + '</span>'
+                    + '</li>';
+            }).join('');
+        }
+
+        function fillFromHistory(url, format) {
+            urlInput.value = url;
+            if (format && formatSelect) {
+                formatSelect.value = format;
+            }
+        }
+
+        function formatTimeAgo(ts) {
+            const diff = Date.now() - ts;
+            const mins = Math.floor(diff / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return mins + 'm ago';
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return hours + 'h ago';
+            const days = Math.floor(hours / 24);
+            return days + 'd ago';
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // Render history on page load
+        renderHistory();
+
+        // Clear button
+        historyClear.addEventListener('click', function(e) {
+            e.stopPropagation();
+            localStorage.removeItem(HISTORY_KEY);
+            historySection.style.display = 'none';
+            historyList.innerHTML = '';
+        });
 
         // ---- Helpers ----
         function setUIState(state, msg) {
@@ -339,6 +565,7 @@
                     statusMsg.innerHTML = '<span class="spinner"></span> ' + (msg || 'Processing...');
                     fetchBtn.disabled = true;
                     urlInput.disabled = true;
+                    formatSelect.disabled = true;
                     break;
                 case 'error':
                     statusMsg.textContent = msg || 'Something went wrong';
@@ -346,11 +573,13 @@
                     resetBtn.style.display = 'inline-block';
                     urlInput.disabled = true;
                     fetchBtn.disabled = true;
+                    formatSelect.disabled = true;
                     break;
                 case 'info':
                     videoCard.classList.add('visible');
                     urlInput.disabled = true;
                     fetchBtn.disabled = true;
+                    formatSelect.disabled = true;
                     break;
                 case 'downloading':
                     videoCard.classList.add('visible');
@@ -359,6 +588,7 @@
                     downloadBtnDisabled.textContent = 'Downloading...';
                     urlInput.disabled = true;
                     fetchBtn.disabled = true;
+                    formatSelect.disabled = true;
                     break;
                 case 'ready':
                     videoCard.classList.add('visible');
@@ -367,11 +597,13 @@
                     progressFill.style.width = '100%';
                     urlInput.disabled = true;
                     fetchBtn.disabled = true;
+                    formatSelect.disabled = true;
                     resetBtn.style.display = 'inline-block';
                     break;
                 default:
                     // idle
                     urlInput.disabled = false;
+                    formatSelect.disabled = false;
                     break;
             }
         }
@@ -413,7 +645,7 @@
                 const resp = await fetch('/api/prepare', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url })
+                    body: JSON.stringify({ url, format: formatSelect.value })
                 });
 
                 if (!resp.ok) {
@@ -423,6 +655,8 @@
 
                 const data = await resp.json();
                 currentTaskId = data.task_id;
+                currentUrl = url;
+                currentFormat = formatSelect.value;
                 startPolling(currentTaskId);
             } catch (e) {
                 setUIState('error', e.message);
@@ -475,6 +709,10 @@
                     if (data.filesize_mb) {
                         downloadLink.textContent = '⬇ Download Audio (' + formatSize(data.filesize_mb) + ')';
                     }
+                    // Save to history on successful download
+                    if (currentUrl) {
+                        addToHistory(currentUrl, currentFormat, data.title || '');
+                    }
                     stopPolling();
                     break;
 
@@ -495,9 +733,14 @@
         function reset() {
             stopPolling();
             currentTaskId = null;
+            currentUrl = null;
+            currentFormat = 'mp3';
+            currentTitle = null;
             urlInput.value = '';
             urlInput.disabled = false;
             fetchBtn.disabled = false;
+            formatSelect.disabled = false;
+            formatSelect.value = 'mp3';
             resetBtn.style.display = 'none';
             statusMsg.className = '';
             statusMsg.innerHTML = '';

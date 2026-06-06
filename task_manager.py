@@ -16,6 +16,7 @@ from models import TaskStatus
 class Task:
     task_id: str
     url: str
+    audio_format: str = "mp3"
     status: TaskStatus = TaskStatus.PREPARING
     title: Optional[str] = None
     cover: Optional[str] = None
@@ -35,10 +36,10 @@ class TaskManager:
         self._tasks: dict[str, Task] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, url: str) -> Task:
+    async def create(self, url: str, audio_format: str = "mp3") -> Task:
         """Create a new task and return it."""
         task_id = uuid.uuid4().hex
-        task = Task(task_id=task_id, url=url)
+        task = Task(task_id=task_id, url=url, audio_format=audio_format)
         async with self._lock:
             self._tasks[task_id] = task
         return task

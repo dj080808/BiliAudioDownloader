@@ -7,10 +7,11 @@ import concurrent.futures
 import json
 import os
 import re
+import shutil
 import subprocess
 from typing import Any, Callable, Awaitable
 
-from config import MAX_FILE_SIZE_BYTES
+from config import MAX_FILE_SIZE_BYTES, NATIVE_AUDIO_FORMATS
 
 ProgressCallback = Callable[[int], Awaitable[None]]
 
@@ -22,8 +23,6 @@ _DEFAULT_HEADERS: list[str] = [
     "--add-header",
     "Referer: https://www.bilibili.com/",
 ]
-
-DEFAULT_AUDIO_EXT = "m4a"
 
 # Shared thread pool for subprocess calls (avoids asyncio subprocess issues on Windows).
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
@@ -46,6 +45,61 @@ def _popen_yt_dlp(*args: str) -> subprocess.Popen:
         encoding="utf-8",
         errors="replace",
     )
+
+
+# Cached ffmpeg availability check (lazy, runs once per process)
+_ffmpeg_available: bool | None = None
+
+
+def is_ffmpeg_available() -> bool:
+    """Check whether ffmpeg is on PATH. Result is cached after first call."""
+    global _ffmpeg_available
+    if _ffmpeg_available is None:
+        _ffmpeg_available = shutil.which("ffmpeg") is not None
+    return _ffmpeg_available
+
+
+def _format_is_native(fmt: str) -> bool:
+    """Return True if *fmt* is served natively by Bilibili (no ffmpeg needed)."""
+    return fmt in NATIVE_AUDIO_FORMATS
+
+
+def _build_yt_dlp_args(
+    url: str,
+    output_path: str,
+    audio_format: str,
+    headers: list[str],
+) -> list[str]:
+    """Build the yt-dlp argument list for a given audio format.
+
+    Native formats (m4a, opus) are downloaded directly.
+    Other formats (mp3, flac, wav, aac) require ffmpeg post-processing.
+
+    Raises ``ValueError`` if ffmpeg is needed but not available.
+    """
+    if _format_is_native(audio_format):
+        return [
+            "-f", f"bestaudio[ext={audio_format}]",
+            "--no-playlist",
+            "-o", output_path,
+            *headers,
+            url,
+        ]
+    else:
+        if not is_ffmpeg_available():
+            raise ValueError(
+                f"Format '{audio_format}' requires ffmpeg for audio conversion. "
+                f"Please install ffmpeg or choose a native format: {', '.join(NATIVE_AUDIO_FORMATS)}."
+            )
+        return [
+            "-f", "bestaudio",
+            "-x",
+            "--audio-format", audio_format,
+            "--no-playlist",
+            "-o", output_path,
+            *headers,
+            url,
+        ]
 
 
 async def get_video_info(url: str) -> dict[str, Any]:
@@ -80,18 +134,22 @@ async def get_video_info(url: str) -> dict[str, Any]:
 async def download_audio(
     url: str,
     output_path: str,
+    audio_format: str = "mp3",
     progress_callback: ProgressCallback | None = None,
     expected_size: int | None = None,
 ) -> None:
-    """Download best audio to *output_path*.
+    """Download audio in the requested *audio_format* to *output_path*.
+
+    Native formats (m4a, opus) are downloaded directly.  Other formats (mp3,
+    flac, wav, aac) trigger ffmpeg post-processing via ``--extract-audio``.
 
     yt-dlp writes DASH fragments to ``<output_path>.part`` and renames on
     completion — progress is tracked by polling the part-file size against
     *expected_size*.  If *expected_size* is not provided it is estimated from
     the metadata.
 
-    Raises ``ValueError`` on failure or if the download exceeds
-    ``MAX_FILE_SIZE_BYTES``.
+    Raises ``ValueError`` on failure, if the download exceeds
+    ``MAX_FILE_SIZE_BYTES``, or if ffmpeg is required but unavailable.
     """
     # If expected_size unknown, estimate from metadata
     if expected_size is None:
@@ -105,16 +163,15 @@ async def download_audio(
             pass
 
     part_path = output_path + ".part"
+    # yt-dlp may also use a .ytdl suffix for DASH fragment downloads
+    ytdl_path = output_path + ".ytdl"
 
     loop = asyncio.get_running_loop()
+    args = _build_yt_dlp_args(url, output_path, audio_format, _DEFAULT_HEADERS)
     proc = await loop.run_in_executor(
         _executor,
         _popen_yt_dlp,
-        "-f", "bestaudio",
-        "--no-playlist",
-        "-o", output_path,
-        *_DEFAULT_HEADERS,
-        url,
+        *args,
     )
 
     last_pct = -1
@@ -123,7 +180,13 @@ async def download_audio(
     async def _poll_progress() -> None:
         nonlocal last_pct
         current_size = 0
-        target = part_path if os.path.exists(part_path) else output_path
+        # yt-dlp writes to .part (regular) or .ytdl (DASH fragments) during download
+        if os.path.exists(part_path):
+            target = part_path
+        elif os.path.exists(ytdl_path):
+            target = ytdl_path
+        else:
+            target = output_path
         if os.path.exists(target):
             current_size = os.path.getsize(target)
 
@@ -208,21 +271,6 @@ def _pick_best_audio_format(formats: list[dict[str, Any]]) -> dict[str, Any] | N
         reverse=True,
     )
     return audio[0] if audio else None
-
-
-def get_audio_ext(formats: list[dict[str, Any]]) -> str:
-    """Pick the file extension for the best audio-only format (default ``m4a``)."""
-    audio = [
-        f for f in formats
-        if f.get("acodec") != "none" and f.get("vcodec") == "none"
-        and f.get("format_note") != "storyboard"
-    ]
-    if not audio:
-        audio = [f for f in formats if f.get("acodec") != "none"]
-    if audio:
-        audio.sort(key=lambda f: f.get("filesize") or f.get("filesize_approx") or 0, reverse=True)
-        return audio[0].get("ext", DEFAULT_AUDIO_EXT)
-    return DEFAULT_AUDIO_EXT
 
 
 def sanitize_filename(title: str) -> str:
