@@ -243,6 +243,16 @@
             background: var(--primary-hover);
         }
 
+        #download-link.downloaded {
+            background: #aaa;
+            cursor: default;
+            pointer-events: none;
+        }
+
+        #download-link.downloaded:hover {
+            background: #aaa;
+        }
+
         #download-btn-disabled {
             display: none;
             width: 100%;
@@ -399,11 +409,6 @@
 
         <div id="status-msg"></div>
 
-        <div id="history-section" style="display:none">
-            <h3>Recent <button id="history-clear">clear</button></h3>
-            <ul id="history-list"></ul>
-        </div>
-
         <div id="video-card">
             <div class="card-header">
                 <img id="cover-img" src="" alt="Cover">
@@ -423,6 +428,12 @@
                 </div>
             </div>
         </div>
+
+        <div id="history-section" style="display:none">
+            <h3>Recent <button id="history-clear">clear</button></h3>
+            <ul id="history-list"></ul>
+        </div>
+
     </div>
 
     <script>
@@ -754,6 +765,7 @@
             progressFill.style.width = '0%';
             progressText.textContent = '';
             coverImg.src = '';
+            downloadLink.classList.remove('downloaded');
         }
 
         // ---- Event listeners ----
@@ -762,6 +774,14 @@
             if (e.key === 'Enter') submitUrl();
         });
         resetBtn.addEventListener('click', reset);
+
+        downloadLink.addEventListener('click', function() {
+            // Visual feedback: mark as downloaded
+            downloadLink.classList.add('downloaded');
+            downloadLink.textContent = '✓ Downloaded';
+            // Auto-reset after download starts (keep card visible briefly)
+            setTimeout(reset, 800);
+        });
     </script>
 </body>
 </html>
