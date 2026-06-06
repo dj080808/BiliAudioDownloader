@@ -566,6 +566,7 @@
                     fetchBtn.disabled = true;
                     urlInput.disabled = true;
                     formatSelect.disabled = true;
+                    resetBtn.style.display = 'inline-block';
                     break;
                 case 'error':
                     statusMsg.textContent = msg || 'Something went wrong';
@@ -580,6 +581,7 @@
                     urlInput.disabled = true;
                     fetchBtn.disabled = true;
                     formatSelect.disabled = true;
+                    resetBtn.style.display = 'inline-block';
                     break;
                 case 'downloading':
                     videoCard.classList.add('visible');
@@ -589,6 +591,7 @@
                     urlInput.disabled = true;
                     fetchBtn.disabled = true;
                     formatSelect.disabled = true;
+                    resetBtn.style.display = 'inline-block';
                     break;
                 case 'ready':
                     videoCard.classList.add('visible');
