@@ -388,10 +388,24 @@
             return mb.toFixed(1) + ' MB';
         }
 
+        // ---- Helpers ----
+        function normalizeUrl(raw) {
+            let url = raw.trim();
+            if (!url) return url;
+            // Auto-prepend https:// if no scheme is present
+            if (!/^https?:\/\//i.test(url)) {
+                url = 'https://' + url;
+            }
+            return url;
+        }
+
         // ---- API calls ----
         async function submitUrl() {
-            const url = urlInput.value.trim();
+            let url = normalizeUrl(urlInput.value);
             if (!url) return;
+
+            // Update the input to show the normalized URL
+            urlInput.value = url;
 
             setUIState('loading', 'Extracting video info...');
 

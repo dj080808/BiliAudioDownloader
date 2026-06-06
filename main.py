@@ -65,9 +65,10 @@ async def root() -> FileResponse:
 @app.post("/api/prepare", response_model=PrepareResponse, status_code=202)
 async def prepare(request: PrepareRequest) -> PrepareResponse:
     """Submit a Bilibili URL and get back a task ID immediately."""
-    _validate_url(request.url)
+    url = _normalize_url(request.url)
+    _validate_url(url)
 
-    task = await task_manager.create(request.url)
+    task = await task_manager.create(url)
     asyncio.create_task(_process_download(task.task_id))
     return PrepareResponse(task_id=task.task_id, status=task.status)
 
@@ -218,6 +219,16 @@ async def _periodic_cleanup() -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _normalize_url(url: str) -> str:
+    """Prepend https:// if the URL has no scheme, so users can paste bare domains."""
+    url = url.strip()
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
+
+
 def _validate_url(url: str) -> None:
     """Raise 400 if *url* does not look like a Bilibili URL."""
     if not url:
